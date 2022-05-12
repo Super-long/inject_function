@@ -355,6 +355,24 @@ func (p *TracedProgram) FindSymbolInEntry(symbolName string, entry *Entry) (uint
 	return 0, 0, errors.New("cannot find symbol")
 }
 
+func (p *TracedProgram) Detach() error {
+	for _, tid := range p.tids {
+		fmt.Println("detaching", "tid", tid)
+
+		err := syscall.PtraceDetach(tid)
+
+		if err != nil {
+			if !strings.Contains(err.Error(), "no such process") {
+				fmt.Println(err, "detach failed", "tid", tid)
+				return errors.WithStack(err)
+			}
+		}
+	}
+
+	fmt.Println("Successfully detach and rerun process", "pid", p.pid)
+	return nil
+}
+
 // ========================================================
 
 // Read parse /proc/[pid]/maps and return a list of entry
@@ -567,7 +585,7 @@ func dumpGot(content string) map[string]uint64 {
 }
 
 func main() {
-	pid := 59785
+	pid := 80488
 	WriteSkewFakeImage := "fake_write.o"
 	WriteSymbolName := "write"
 
@@ -621,6 +639,9 @@ func main() {
 		fmt.Println("rewrite fail, recover fail")
 		return
 	}
+	
+	// step7: exit
+	program.Detach()
 
 	time.Sleep(1000*time.Second)
 	return

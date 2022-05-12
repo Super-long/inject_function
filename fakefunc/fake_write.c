@@ -34,7 +34,7 @@ inline int real_write(int fd, const void *buf, size_t count) {
   return ret;
 }
 
-inline int  real_nanosleep(const struct timespec *req, struct timespec *rem) {
+inline int real_nanosleep(const struct timespec *req, struct timespec *rem) {
   int ret;
   asm volatile
     (
