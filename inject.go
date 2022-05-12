@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+	"regexp"
 
 	"github.com/pkg/errors"
 )
@@ -134,7 +135,8 @@ func (p *TracedProgram) JumpToFakeFunc(originAddr uint64, targetAddr uint64) err
 func (p *TracedProgram) SetToFakeFunc(originAddr uint64, targetAddr uint64) error {
 	instructions := make([]byte, 8)
 	binary.LittleEndian.PutUint64(instructions, targetAddr)
-	return p.PtraceWriteSlice(originAddr, instructions)
+
+	return p.WriteSlice(originAddr, instructions)
 }
 
 // Protect will backup regs and rip into fields
@@ -537,8 +539,35 @@ func FindExecutableFileEntry(program *TracedProgram) (*Entry) {
 	return targetEntry
 }
 
+func dumpGot(content string) map[string]uint64 {
+	got := map[string]uint64{}
+	entries := strings.Split(content, "\n")
+	for idx, entry := range entries {
+	  if idx < 4 {
+		continue
+	  }
+	  if len(entry) < 5 {
+		  continue
+	  }
+	  col := strings.Split(entry, " ")
+	  addr, err := strconv.ParseUint(col[0], 16, 64)
+	  if err != nil {
+		fmt.Errorf("invalid input")
+	  }
+	  rgx, err := regexp.Compile("^[_a-zA-Z0-9]+")
+	  if err != nil {
+		fmt.Errorf("[Regex Error]")
+	  }
+	  name := rgx.FindString(col[3])
+	  if len(name) > 0 {
+		got[name] = addr
+	  }
+	}
+	return got
+}
+
 func main() {
-	pid := 14519
+	pid := 59785
 	WriteSkewFakeImage := "fake_write.o"
 	WriteSymbolName := "write"
 
@@ -570,13 +599,10 @@ func main() {
 		return
 	}
 
+	GOTTable := dumpGot(outMsg)
 
-	// // step4: 获取GOTEntry中write相关的数据
-	// originAddr, size, err := program.FindSymbolInEntry(WriteSymbolName, targetEntry)
-	// if err != nil {
-	// 	fmt.Printf("find origin %s in vdso\n", WriteSymbolName)
-	// 	return
-	// }
+	writeOffset := GOTTable[WriteSymbolName]
+
 
 	// // step5: 读到这段地址初始的数据,用于后续恢复
 	// // originFuncBytes, err := program.ReadSlice(originAddr, size)
@@ -585,13 +611,16 @@ func main() {
 	// 	fmt.Println("ReadSlice failed")
 	// 	return
 	// }
+	fmt.Printf("=============0x%X 0x%X 0X%X\n",targetEntry.StartAddress, writeOffset, fakeEntry.StartAddress)
 
-	// // step6: 把fakefunc在目标进程中mmap的地址放到GOTentry的地址上
-	// err = program.SetToFakeFunc(originAddr, fakeEntry.StartAddress)
-	// if err != nil {
-	// 	fmt.Println("rewrite fail, recover fail")
-	// 	return
-	// }
+	// step6: 把fakefunc在目标进程中mmap的地址放到GOTentry的地址上
+	// 注意地址随机化
+	//err = program.SetToFakeFunc(targetEntry.StartAddress + writeOffset, fakeEntry.StartAddress)
+	err = program.SetToFakeFunc(writeOffset, fakeEntry.StartAddress)
+	if err != nil {
+		fmt.Println("rewrite fail, recover fail")
+		return
+	}
 
 	time.Sleep(1000*time.Second)
 	return

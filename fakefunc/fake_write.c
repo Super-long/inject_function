@@ -33,6 +33,20 @@ inline int real_write(int fd, const void *buf, size_t count) {
 
   return ret;
 }
+
+inline int  real_nanosleep(const struct timespec *req, struct timespec *rem) {
+  int ret;
+  asm volatile
+    (
+      "syscall"
+      : "=a" (ret)
+      : "0"(__NR_nanosleep), "D"(req), "S"(rem)
+      : "rcx", "r11", "memory"
+    );
+
+  return ret;
+}
+
 #elif defined(__aarch64__)
 inline int real_write(int fd, const void *buf, size_t count)
 //inline int real_gettimeofday(struct timeval *tv, struct timezone *tz)
@@ -57,7 +71,7 @@ int write(int fd, const void *buf, size_t count) {
   struct timespec req;
   req.tv_sec = X;
   req.tv_nsec = Y;
-  nanosleep(&req, NULL);
+  real_nanosleep(&req, NULL);
   
   return real_write(fd, buf, count);
 }
