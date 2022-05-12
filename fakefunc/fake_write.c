@@ -16,36 +16,48 @@
  */
 #include <time.h>
 #include <inttypes.h>
-#include <syscall.h>
+#include <sys/syscall.h>
 
-extern long SLEEP_Nanosecond;
-extern time_t SLEEP_Second;
 
 #if defined(__amd64__)
 inline int real_write(int fd, const void *buf, size_t count) {
-	//return syscall(__NR_write, fd, buf, count);
-	int ret;
-	asm volatile
-		(
-			"syscall"
-			: "=a" (ret)
-			: "0"(__NR_write), "D"(fd), "S"(buf), "d"(count)
-			: "rcx", "r11", "memory"
-		);
+  //return syscall(__NR_write, fd, buf, count);
+  int ret;
+  asm volatile
+    (
+      "syscall"
+      : "=a" (ret)
+      : "0"(__NR_write), "D"(fd), "S"(buf), "d"(count)
+      : "rcx", "r11", "memory"
+    );
 
-	return ret;
+  return ret;
 }
 #elif defined(__aarch64__)
-inline int real_write(int fd, const void *buf, size_t count) {
-	return -1;
+inline int real_write(int fd, const void *buf, size_t count)
+//inline int real_gettimeofday(struct timeval *tv, struct timezone *tz)
+{
+    register int w0 __asm__("w0");
+
+    register int x0 __asm__("x0") = fd;
+    register const void*x1 __asm__("x1") = buf;
+	register size_t x2 __asm__("x2") = count;
+    register uint64_t w8 __asm__("w8") = SYS_write; /* syscall number */
+    __asm__ __volatile__(
+        "svc 0;"
+        : "+r"(w0)
+        : "r"(x0), "r" (x1), "r"(x2) ,"r"(w8)
+        : "memory");
+
+    return w0;
 }
 #endif
 
 int write(int fd, const void *buf, size_t count) {
-	struct timespec req;
-	req.tv_sec = SLEEP_Second;
-	req.tv_nsec = SLEEP_Nanosecond;
-	nanosleep(&req, NULL);
-	
-	return real_write(fd, buf, count);
+  struct timespec req;
+  req.tv_sec = X;
+  req.tv_nsec = Y;
+  nanosleep(&req, NULL);
+  
+  return real_write(fd, buf, count);
 }

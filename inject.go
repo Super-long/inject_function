@@ -130,6 +130,12 @@ func (p *TracedProgram) JumpToFakeFunc(originAddr uint64, targetAddr uint64) err
 	return p.PtraceWriteSlice(originAddr, instructions)
 }
 
+func (p *TracedProgram) SetToFakeFunc(originAddr uint64, targetAddr uint64) error {
+	instructions := make([]byte, 8)
+	binary.LittleEndian.PutUint64(instructions, targetAddr)
+	return p.PtraceWriteSlice(originAddr, instructions)
+}
+
 // Protect will backup regs and rip into fields
 func (p *TracedProgram) Protect() error {
 	err := syscall.PtraceGetRegs(p.pid, p.backupRegs)
@@ -396,6 +402,7 @@ func ReadF(pid int) ([]Entry, error) {
 			paddingSize,
 			path,
 		})
+		fmt.Println(entries.backup())
 	}
 
 	return entries, nil
@@ -503,6 +510,7 @@ func FindTargetEntry(program *TracedProgram, TargetEntryName string) (*Entry) {
 	for index := range program.Entries {
 		// reverse loop is faster
 		e := program.Entries[len(program.Entries)-index-1]
+		fmt.Printf("Target entry loop [%s]\n", e.Path)
 		if e.Path == TargetEntryName {
 			targetEntry = &e
 			break
@@ -517,45 +525,47 @@ func FindTargetEntry(program *TracedProgram, TargetEntryName string) (*Entry) {
 
 func main() {
 	pid := 45131
-	var content []byte=[]byte("nihao")
-	//EntryName := "[vdso]"
-	//test1SymbolName := "test1"
-	//writeSymbolName := "write"
+	WriteSkewFakeImage := "fake_write.o"
+	WriteSymbolName := "write"
+	gotSection = ".got"
+
+	// step1: 在.text段中找到write相关的代码
+	writeimage, err := LoadFakeImageFromEmbedFs(WriteSkewFakeImage, WriteSymbolName)
 
 	program, err := Trace(pid)
 	
-	// 查找名称为[vdso]的段
-	//targetEntry := FindTargetEntry(program, EntryName)
+	// step2: 查找名称为 gotSection 的段
+	GOTEntry := FindTargetEntry(program, gotSection)
 
-	// 把content拷贝到目标地址空间里，目标地址为fakeEntry
-	fakeEntry, err := program.MmapSlice(content)
+	// step3: 把fakefunc的代码段拷贝到目标地址空间里
+	fakeEntry, err := program.MmapSlice(writeimage.content)
 	if err != nil {
 		fmt.Println(errors.Wrapf(err, "mmap fake image"))
 		return
 	}
 	fmt.Println(fakeEntry)
 
-	// // 获取符号相关的地址
-	// originAddr, size, err := program.FindSymbolInEntry(test1SymbolName, targetEntry)
-	// if err != nil {
-	// 	fmt.Printf("find origin %s in vdso\n", test1SymbolName)
-	// 	return
-	// }
+	// step4: 获取GOTEntry中write相关的数据
+	originAddr, size, err := program.FindSymbolInEntry(WriteSymbolName, GOTEntry)
+	if err != nil {
+		fmt.Printf("find origin %s in vdso\n", test1SymbolName)
+		return
+	}
 
-	// // 获取符号的执行体
-	// originFuncBytes, err := program.ReadSlice(originAddr, size)
-	// if err != nil {
-	// 	fmt.Println("ReadSlice failed")
-	// 	return
-	// }
+	// step5: 读到这段地址初始的数据,用于后续恢复
+	originFuncBytes, err := program.ReadSlice(originAddr, size)
+	if err != nil {
+		fmt.Println("ReadSlice failed")
+		return
+	}
 
-	// // mov rax StartAddress
-	// // jmp rax
-	// err = program.JumpToFakeFunc(originAddr, fakeEntry.StartAddress)
-	// if err != nil {
-	// 	fmt.Println("rewrite fail, recover fail")
-	// 	return
-	// }
+	// step6: 把fakefunc在目标进程中mmap的地址放到GOTentry的地址上
+	err = program.SetToFakeFunc(originAddr, fakeEntry.StartAddress)
+	if err != nil {
+		fmt.Println("rewrite fail, recover fail")
+		return
+	}
 
-
+	time.Sleep(1000*time.Second)
+	return
 }
