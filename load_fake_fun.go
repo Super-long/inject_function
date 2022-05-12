@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"debug/elf"
 	"embed"
-	"encoding/binary"
+	"fmt"
 
 	"github.com/pkg/errors"
 )
 
-//go:embed fakefunc/*.o
+//go:embed fakefunc/fake_write.o
 var fakefunc embed.FS
 
 const textSection = ".text"
@@ -45,11 +45,6 @@ func LoadFakeImageFromEmbedFs(filename string, symbolName string) (*FakeImage, e
 		return nil, errors.Wrapf(err, "parse elf file %s", path)
 	}
 
-	syms, err := elfFile.Symbols()
-	if err != nil {
-		return nil, errors.Wrapf(err, "get symbols %s", path)
-	}
-
 	var imageContent []byte
 
 	for _, r := range elfFile.Sections {
@@ -57,6 +52,7 @@ func LoadFakeImageFromEmbedFs(filename string, symbolName string) (*FakeImage, e
 		if r.Type == elf.SHT_PROGBITS && r.Name == textSection {
 			imageContent, err = r.Data()
 			if err != nil {
+				fmt.Println("error get imageContent")
 				return nil, errors.Wrapf(err, "read text section data %s", path)
 			}
 			break

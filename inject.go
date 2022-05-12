@@ -9,19 +9,20 @@ struct iovec {
 */
 import "C"
 
-
 import (
 	"bytes"
+	"context"
 	"debug/elf"
 	"encoding/binary"
 	"fmt"
 	"os"
+	os_exec "os/exec"
 	"strconv"
 	"strings"
 	"syscall"
-	"unsafe"
 	"time"
-	
+	"unsafe"
+
 	"github.com/pkg/errors"
 )
 
@@ -283,7 +284,6 @@ func (p *TracedProgram) MmapSlice(slice []byte) (*Entry, error) {
 	fmt.Printf("before mmap %d\n", size)
 	addr, err := p.Mmap(8192, 0)
 	fmt.Printf("============addr : %#x ======== %d\n", addr, addr)
-	time.Sleep(time.Duration(100)*time.Second)
 	if err != nil {
 		fmt.Println("error in mmap")
 		return nil, errors.WithStack(err)
@@ -402,7 +402,8 @@ func ReadF(pid int) ([]Entry, error) {
 			paddingSize,
 			path,
 		})
-		fmt.Println(entries.backup())
+		// 打印最后一个元素
+		fmt.Println(entries[:len(entries)-1])
 	}
 
 	return entries, nil
@@ -415,7 +416,7 @@ func Trace(pid int) (*TracedProgram, error) {
 	tidMap := make(map[int]bool)
 	retryCount := make(map[int]int)
 	for {
-		threads, err := ioutil.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
+		threads, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
@@ -523,21 +524,30 @@ func FindTargetEntry(program *TracedProgram, TargetEntryName string) (*Entry) {
 	return targetEntry
 }
 
+func FindExecutableFileEntry(program *TracedProgram) (*Entry) {
+	var targetEntry *Entry
+	if len(program.Entries) >= 1 {
+		targetEntry = &program.Entries[0]
+	}
+	if targetEntry == nil {
+		fmt.Println("Not found targetEbrty")
+		return nil
+	}
+	fmt.Println("we get the first entry in maps: ", targetEntry)
+	return targetEntry
+}
+
 func main() {
-	pid := 45131
+	pid := 14519
 	WriteSkewFakeImage := "fake_write.o"
 	WriteSymbolName := "write"
-	gotSection = ".got"
 
 	// step1: 在.text段中找到write相关的代码
 	writeimage, err := LoadFakeImageFromEmbedFs(WriteSkewFakeImage, WriteSymbolName)
 
 	program, err := Trace(pid)
-	
-	// step2: 查找名称为 gotSection 的段
-	GOTEntry := FindTargetEntry(program, gotSection)
 
-	// step3: 把fakefunc的代码段拷贝到目标地址空间里
+	// step2: 把fakefunc的代码段拷贝到目标地址空间里
 	fakeEntry, err := program.MmapSlice(writeimage.content)
 	if err != nil {
 		fmt.Println(errors.Wrapf(err, "mmap fake image"))
@@ -545,26 +555,43 @@ func main() {
 	}
 	fmt.Println(fakeEntry)
 
-	// step4: 获取GOTEntry中write相关的数据
-	originAddr, size, err := program.FindSymbolInEntry(WriteSymbolName, GOTEntry)
+	// step3: 拿到maps中第一个段，path是二进制的地址，StartAddress是起始地址，然后再通过objdump拿到偏移地址
+	targetEntry := FindExecutableFileEntry(program)
+
+	ctx := context.Background()
+	args := fmt.Sprintf("-R %s", targetEntry.Path)
+	argsArray := strings.Split(args, " ")
+	command := os_exec.CommandContext(ctx, "objdump", argsArray...)
+	output, err := command.CombinedOutput()
+	outMsg := string(output)
+	fmt.Printf("Command Result, output: %v, err: %v\n", outMsg, err)
 	if err != nil {
-		fmt.Printf("find origin %s in vdso\n", test1SymbolName)
+		fmt.Printf("command exec failed, %s\n", err.Error())
 		return
 	}
 
-	// step5: 读到这段地址初始的数据,用于后续恢复
-	originFuncBytes, err := program.ReadSlice(originAddr, size)
-	if err != nil {
-		fmt.Println("ReadSlice failed")
-		return
-	}
 
-	// step6: 把fakefunc在目标进程中mmap的地址放到GOTentry的地址上
-	err = program.SetToFakeFunc(originAddr, fakeEntry.StartAddress)
-	if err != nil {
-		fmt.Println("rewrite fail, recover fail")
-		return
-	}
+	// // step4: 获取GOTEntry中write相关的数据
+	// originAddr, size, err := program.FindSymbolInEntry(WriteSymbolName, targetEntry)
+	// if err != nil {
+	// 	fmt.Printf("find origin %s in vdso\n", WriteSymbolName)
+	// 	return
+	// }
+
+	// // step5: 读到这段地址初始的数据,用于后续恢复
+	// // originFuncBytes, err := program.ReadSlice(originAddr, size)
+	// _, err = program.ReadSlice(originAddr, size)
+	// if err != nil {
+	// 	fmt.Println("ReadSlice failed")
+	// 	return
+	// }
+
+	// // step6: 把fakefunc在目标进程中mmap的地址放到GOTentry的地址上
+	// err = program.SetToFakeFunc(originAddr, fakeEntry.StartAddress)
+	// if err != nil {
+	// 	fmt.Println("rewrite fail, recover fail")
+	// 	return
+	// }
 
 	time.Sleep(1000*time.Second)
 	return
