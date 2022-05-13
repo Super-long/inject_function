@@ -20,9 +20,9 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 	"unsafe"
 	"regexp"
+	"flag"
 
 	"github.com/pkg/errors"
 )
@@ -585,14 +585,16 @@ func dumpGot(content string) map[string]uint64 {
 }
 
 func main() {
-	pid := 80488
+    pid := flag.Int("pid", 0, "How old are you?")
+	flag.Parse()
 	WriteSkewFakeImage := "fake_write.o"
 	WriteSymbolName := "write"
 
 	// step1: 在.text段中找到write相关的代码
 	writeimage, err := LoadFakeImageFromEmbedFs(WriteSkewFakeImage, WriteSymbolName)
 
-	program, err := Trace(pid)
+	fmt.Println(*pid)
+	program, err := Trace(*pid)
 
 	// step2: 把fakefunc的代码段拷贝到目标地址空间里
 	fakeEntry, err := program.MmapSlice(writeimage.content)
@@ -640,9 +642,8 @@ func main() {
 		return
 	}
 	
-	// step7: exit
+	// step7: ptrace exit.
 	program.Detach()
 
-	time.Sleep(1000*time.Second)
 	return
 }
